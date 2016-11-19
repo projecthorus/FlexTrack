@@ -11,7 +11,7 @@
 
 #ifdef GPS_I2C
 //  #include <Wire.h>
-  #include <I2C.h>
+  #include "I2C.h"
 #endif
 
 // Globals

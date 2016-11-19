@@ -93,6 +93,7 @@
 #define PA_LOW_BOOST                0x81
 #define PA_MED_BOOST                0x8A
 #define PA_MAX_UK                   0x88    // 10mW (max 434)
+#define PA_MAX_VK                   0x8C    // 25mW (Max power per Australian LIPD standard)
 #define PA_OFF_BOOST                0x00
 #define RFO_MIN                     0x00
 
@@ -167,14 +168,16 @@ void setupRFM98(void)
     LowDataRateOptimize = 0;    
   #endif
 
+  // Modified for Project Horus fork. Because yay 125kHz bandwidth.
   #if LORA_MODE == 0  
     ImplicitOrExplicit = EXPLICIT_MODE;
     ErrorCoding = ERROR_CODING_4_8;
-    Bandwidth = BANDWIDTH_20K8;
-    SpreadingFactor = SPREADING_11;
-    LowDataRateOptimize = 0x08;		
+    Bandwidth = BANDWIDTH_125K;
+    SpreadingFactor = SPREADING_10;
+    LowDataRateOptimize = 0x08;   
   #endif
 
+  // Not sure whats going on here.
   PayloadLength = ImplicitOrExplicit == IMPLICIT_MODE ? 255 : 0;
 
   writeRegister(REG_MODEM_CONFIG, ImplicitOrExplicit | ErrorCoding | Bandwidth);
@@ -238,7 +241,7 @@ void setMode(byte newMode)
   {
     case RF98_MODE_TX:
       writeRegister(REG_LNA, LNA_OFF_GAIN);  // TURN LNA OFF FOR TRANSMITT
-      writeRegister(REG_PA_CONFIG, PA_MAX_UK);
+      writeRegister(REG_PA_CONFIG, PA_MAX_VK); // Modified for Project Horus fork
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       
@@ -329,69 +332,36 @@ void CheckLoRaRx(void)
 					
       if (Bytes > 0)
       {
-        if (Sentence[0] == '$')
-        {
-          // ASCII telemetry
-          Serial.println("Rx ASCII");
-          if (memcmp(Sentence+2, LORA_PAYLOAD_ID, strlen(LORA_PAYLOAD_ID)) != 0)
-          {
-            RepeatedPacketType = 3;
-          }
+        // Only act on messages addressed to us.
+        if (Sentence[2] != PAYLOAD_ID){
+          Serial.println(F("Packet not for us. Ignoring"));
+          return;
         }
-        /*
-        else if ((Sentence[0] & 0xC0) == 0xC0)
-        {
-          // Binary downlink message
-          char Payload[32];
-          int SourceID;
-							
-          SourceID = Message[0] & 0x07;
-						
-          if (SourceID == LORA_ID)
-          {
-            Serial.println("Ignoring Binary Repeat");
-          }
-          else
-          {
-            Serial.print("Balloon Binary Message from sender "); Serial.println(SourceID);
-            
-            // Replace the sender ID with ours
-            Sentence[0] = Sentenceage[0] & 0xC7 | (LORA_ID << 3);
-            memcpy(&PacketToRepeat, Sentence, sizeof(PacketToRepeat));
-            RepeatedPacketType = 1;
-							
-            AirCount++;
-          }
-        }
-        else if ((Message[0] & 0xC0) == 0x80)
-        {
-          int SenderID, TargetID;
-						
-          TargetID = Message[0] & 0x07;
-          SenderID = (Message[0] >> 3) & 0x07;
 
-          Serial.print("Uplink from "); Serial.print(SenderID); Serial.print(" to "); Serial.print(TargetID); Serial.print(", Message "); Serial.println((char *)Message+1);
-									
-          if (TargetID == LORA_ID)
-          {
-            Serial.println("Message was for us!");
-            Serial.print("Message is "); Serial.println((char *)Message+1);
-              
-            GroundCount++;
-          }
-          else
-          {
-            Serial.println("Message is for another balloon");
-            Message[0] = Message[0] & 0xC7 | (LORA_ID << 3);
-            memcpy(&PacketToRepeat, Message, sizeof(PacketToRepeat));
-            RepeatedPacketType = 2;
-          }
-        }
-        else
+        // If we're here, the message is directed at us!
+        if (Sentence[0] == '0')
         {
-          Serial.print("Unknown message "); Serial.println((int)Message[0]);
+          // Binary Telemetry. Ignore.
+          Serial.println(F("Rx Binary Packet")); 
         }
-        */
+        else if (Sentence[0] == '1')
+        {
+          // Text Message Packet. Repeat Immediately.
+
+        }
+        else if (Sentence[0] == '2')
+        {
+          // Cut-down command. Check the auth code, ACK, then act on the command.
+
+        }
+        else if (Sentence[0] == '3')
+        {
+          // Parameter change command. ACK immediately.
+
+        }
+        else{
+          return;
+        }
       }
     }
   }
@@ -667,7 +637,7 @@ void CheckLoRa(void)
       else
       {
         // 0x80 | (LORA_ID << 3) | TargetID
-        PacketLength = BuildSentence((char *)Sentence, LORA_PAYLOAD_ID);
+        //PacketLength = BuildSentence((char *)Sentence, LORA_PAYLOAD_ID);
 	      Serial.println(F("LoRa: Tx ASCII Sentence"));
       }
 							
