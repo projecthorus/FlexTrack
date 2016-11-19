@@ -1,10 +1,10 @@
-# FlexTrack 
-Flexible Arduino-based tracker software for RTTY, LoRa and APRS.
+# FlexTrack - Project Horus Fork
+Fork of daveake's FlexTrack software, as used for the Project Horus cutdown / mission control payload.
 
+We've been using a modified version of FlexTrack for some time. This is an attempt to clean up the codebase, and add additional functionality as is required for some upcoming balloon launches.
 
-Using #defines in the main file, this can be configured for any combination
-of RTTY (using NTX2 or MTX2), LoRa (RFM98) and APRS (HX1).  Various
-parameters such as transmit frequency can be adjusted also.
-
-The default configuration is for the HABduino tracker - see http://www.habduino.org/,
-using RTTY and APRS.
+The main differences to FlexTrack master are:
+- Targeted at LoRa payloads only.
+- No RTTY/APRS support.
+- Only use binary packets.
+- Additional uplink packets.
