@@ -39,7 +39,7 @@
 #define POWERSAVING	                      // Comment out to disable GPS power saving
 
 // LORA settings
-#define LORA_SLOT            PAYLOAD_ID
+#define LORA_SLOT            (PAYLOAD_ID-1)*5
 #define LORA_REPEAT_SLOT_1   0
 #define LORA_REPEAT_SLOT_2   0
 #define LORA_ID              PAYLOAD_ID
@@ -88,6 +88,10 @@
 //------------------------------------------------------------------------------------------------------
 //
 //  Globals
+
+// Binary payload format definition.
+// This must align with the definitions in HorusPackets.py, within the
+// HorusGroundStation codebase. https://github.com/projecthorus/HorusGroundStation
 
 struct TBinaryPacket
 {
@@ -165,6 +169,10 @@ void setup()
 
   Serial.print(F("Free memory = "));
   Serial.println(freeRam());
+
+  // Set up Pyro IO line.
+  pinMode(PYRO_ENABLE,OUTPUT);
+  digitalWrite(PYRO_ENABLE,LOW);
 
   SetupLEDs();
   

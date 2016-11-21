@@ -44,6 +44,10 @@
 #define	REG_DETECTION_THRESHOLD     0x37
 #define REG_DIO_MAPPING_1           0x40
 #define REG_DIO_MAPPING_2           0x41
+#define REG_TEMP                    0x3C
+#define REG_PKT_SNR                 0x19
+#define REG_PKT_RSSI                0x1A
+#define REG_RSSI                    0x1B
 
 // MODES
 #define RF98_MODE_RX_CONTINUOUS     0x85
@@ -114,7 +118,7 @@ int TargetID;
 struct TBinaryPacket PacketToRepeat;
 byte SendRepeatedPacket, RepeatedPacketType=0;
 int ImplicitOrExplicit;
-int GroundCount;
+uint8_t GroundCount;
 int AirCount;
 int BadCRCCount;
 unsigned char Sentence[SENTENCE_LENGTH];
@@ -315,20 +319,29 @@ void unselect()
   digitalWrite(LORA_NSS, HIGH);
 }
 
+// Horus Update:
+// Desired behaviour while listening is to immediately respond to a received packet, then go back to listening again.
+// It's the ground station's responsibility to transmit at an appropriate time that our response doesn't clash with another payload.
+
 void CheckLoRaRx(void)
 {
   if (LoRaMode == lmListening)
   {
     if (digitalRead(LORA_DIO0))
     {
-      // unsigned char Message[32];
       int Bytes;
 					
       Bytes = receiveMessage(Sentence, sizeof(Sentence));
+      // Record some RF stats on the received message.
+      uint8_t pkt_rssi = (uint8_t)readRegister(REG_PKT_RSSI);
+      uint8_t pkt_snr = (uint8_t)readRegister(REG_PKT_SNR);
       Serial.print("Rx "); Serial.print(Bytes); Serial.println(" bytes");
       RepeatedPacketType = 0;
       
       Bytes = min(Bytes, sizeof(Sentence));
+
+      // Delay for a short amount of time, to allow the ground stations to switch back into RX mode.
+      delay(500);
 					
       if (Bytes > 0)
       {
@@ -341,23 +354,27 @@ void CheckLoRaRx(void)
         // If we're here, the message is directed at us!
         if (Sentence[0] == '0')
         {
-          // Binary Telemetry. Ignore.
+          // Binary Telemetry. Ignore. Not even sure we should ever get here.
           Serial.println(F("Rx Binary Packet")); 
         }
         else if (Sentence[0] == '1')
         {
           // Text Message Packet. Repeat Immediately.
 
+          // Set the 'is repeated' flag, then re-transmit the text message.
+
+          GroundCount++;
         }
         else if (Sentence[0] == '2')
         {
           // Cut-down command. Check the auth code, ACK, then act on the command.
 
+          GroundCount++;
         }
         else if (Sentence[0] == '3')
         {
           // Parameter change command. ACK immediately.
-
+          GroundCount++;
         }
         else{
           return;
@@ -371,21 +388,25 @@ int TimeToSend(void)
 {
   int CycleSeconds;
 	
-  SendRepeatedPacket = 0;
+  SendRepeatedPacket = 0; // Horus: I don't think this variable is used any more.
 
   if (LORA_CYCLETIME == 0)
   {
     // Not using time to decide when we can send
+    // Horus: Should modify this so that it listens for a bit instead of just TXing constantly.
+    // Could do this by checking a stored value against millis()
     return 1;
   }
 
   if (millis() > (LastLoRaTX + LORA_CYCLETIME*1000+2000))
   {
-    // Timed out
+    // Timed out. Transmit anyway. 
+    // Horus: Not 100% sure we want this. May end up with collisions.
     return 1;
   }
-  
-  if (GPS.Satellites > 0)
+  // Horus: Note that this TDMA stuffis only going to work if we have GPS lock.
+  // We should probably consider a backup option (that's better than the 'timeout' solution above.)
+  if (GPS.Satellites > 0) 
   {
     static int LastCycleSeconds=-1;
 
@@ -396,17 +417,10 @@ int TimeToSend(void)
     {
       LastCycleSeconds = CycleSeconds;
       
+      // If we're in our slot, then transmit.
       if (CycleSeconds == LORA_SLOT)
       {
         SendRepeatedPacket = 0;
-        return 1;
-      }
-
-      if (RepeatedPacketType && ((CycleSeconds == LORA_REPEAT_SLOT_1) || (CycleSeconds == LORA_REPEAT_SLOT_2)))
-      {
-        Serial.println("Time to repeat");
-        SendRepeatedPacket = RepeatedPacketType;
-        RepeatedPacketType = 0;
         return 1;
       }
     }
@@ -539,19 +553,30 @@ int receiveMessage(unsigned char *message, int MaxLength)
   return Bytes;
 }
 
-
+// Updated for Project Horus binary packet format.
 int BuildLoRaPositionPacket(unsigned char *TxLine)
 {
   struct TBinaryPacket BinaryPacket;
 
   SentenceCounter++;
-
-  BinaryPacket.PayloadIDs = 0xC0 | (LORA_ID << 3) | LORA_ID;
+  BinaryPacket.PacketType = 0;
+  BinaryPacket.PayloadFlags = 0;
+  BinaryPacket.PayloadIDs = LORA_ID;
   BinaryPacket.Counter = SentenceCounter;
   BinaryPacket.BiSeconds = GPS.SecondsInDay / 2L;
   BinaryPacket.Latitude = GPS.Latitude;
   BinaryPacket.Longitude = GPS.Longitude;
-  BinaryPacket.Altitude = GPS.Altitude;
+  // Sanitise the GPS altitude before we convert to a uint16_t
+  if(GPS.Altitude<0){GPS.Altitude = 0;}
+  BinaryPacket.Altitude = (uint16_t)GPS.Altitude;
+  BinaryPacket.Speed = 0;//GPS.Speed; // Currently the GPS library doesn't get speed-over-ground. We calculate this on the ground instead, using position deltas.
+  BinaryPacket.BattVoltage = GetBattVoltage();
+  BinaryPacket.PyroVoltage = GetPyroVoltage();
+  BinaryPacket.Sats = GPS.Satellites;
+  BinaryPacket.Temp = readRegister(REG_TEMP);
+  BinaryPacket.rxPktCount = GroundCount;
+  BinaryPacket.rxRSSI = readRegister(REG_RSSI);
+  BinaryPacket.telemFlags = 0; // Horus: We could use this field to indicate a cutdown command has succeeded.
 
   memcpy(TxLine, &BinaryPacket, sizeof(BinaryPacket));
 	
@@ -560,89 +585,20 @@ int BuildLoRaPositionPacket(unsigned char *TxLine)
 
 void CheckLoRa(void)
 {
-  /*
-   if (LORA_CYCLETIME > 0)
-   {
-     // TDMA
-     static long LastCheckAt=-1;
-    int CurrentSeconds;
-
-    if (GPS.Seconds != LastCheckAt)
-    {
-      LastCheckAt = GPS.Seconds;
-      CurrentSeconds = GPS.Seconds % LORA_CYCLETIME;
-
-      if (CurrentSeconds == LORA_SLOT)
-      {
-        // Send our telemetry
-        char *Message = "$Hello world";
-      
-        SendLoRaPacket(Message, strlen(Message)+1);
-      }
-      else if (UplinkMessage[0] && (CurrentSeconds == LORA_REPEATSLOT))
-      {
-        SendLoRaPacket(UplinkMessage, strlen(UplinkMessage));
-        UplinkMessage[0] = '\0';
-      }
-    }
-  }
-  
-  */
 
   CheckLoRaRx();
 		
   if (LoRaIsFree())
   {		
-    Serial.println("LoRa is free");
-    if (SendRepeatedPacket == 3)
-    {
-      // Repeat ASCII sentence
-      SendLoRaPacket(Sentence, strlen((char *)Sentence)+1);
-				
-      RepeatedPacketType = 0;
-      SendRepeatedPacket = 0;
-    }
-    else if (SendRepeatedPacket == 2)
-    {
-      Serial.println(F("Repeating uplink packet"));
-				
-        // 0x80 | (LORA_ID << 3) | TargetID
-      SendLoRaPacket((unsigned char *)&PacketToRepeat, sizeof(PacketToRepeat));
-				
-      RepeatedPacketType = 0;
-      SendRepeatedPacket = 0;
-    }
-    else if (SendRepeatedPacket == 1)
-    {
-      Serial.println(F("Repeating balloon packet"));
-				
-        // 0x80 | (LORA_ID << 3) | TargetID
-      SendLoRaPacket((unsigned char *)&PacketToRepeat, sizeof(PacketToRepeat));
-				
-      RepeatedPacketType = 0;
-      SendRepeatedPacket = 0;
-    }
-    else			
-    {
-      int PacketLength;
-      // unsigned char Sentence[SENTENCE_LENGTH];
-				
-      if (LORA_BINARY)
-      {
-        
-        // 0x80 | (LORA_ID << 3) | TargetID
-        PacketLength = BuildLoRaPositionPacket(Sentence);
-	      Serial.println(F("LoRa: Tx Binary packet"));
-      }
-      else
-      {
-        // 0x80 | (LORA_ID << 3) | TargetID
-        //PacketLength = BuildSentence((char *)Sentence, LORA_PAYLOAD_ID);
-	      Serial.println(F("LoRa: Tx ASCII Sentence"));
-      }
-							
-      SendLoRaPacket(Sentence, PacketLength);		
-    }
+    // Transmit a binary packet.
+    Serial.println("Time to send.");
+    int PacketLength;
+
+    PacketLength = BuildLoRaPositionPacket(Sentence);
+    Serial.println(F("LoRa: Tx Binary packet"));
+						
+    SendLoRaPacket(Sentence, PacketLength);		
+    
   }
 }
 

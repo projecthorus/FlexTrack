@@ -7,7 +7,7 @@ The main differences to FlexTrack master are:
 - Targeted at LoRa payloads only.
 - No RTTY/APRS support.
 - Only use binary packets.
-- Additional uplink packets.
+- Additional uplink packet types.
 
 
 NOTE: This code will be in a somewhat broken state for a while, while we merge in the changes....

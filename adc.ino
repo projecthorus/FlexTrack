@@ -22,6 +22,8 @@ void SetupADC(void)
     // Serial.println("Setup A0");
     pinMode(A0, INPUT);
   #endif
+  pinMode(BATT_ADC,INPUT);
+  pinMode(PYRO_ADC,INPUT);
 }
 
 void CheckADC(void)
@@ -59,3 +61,21 @@ unsigned int ReadADC(int Pin, float Multiplier, unsigned int *Readings)
   return (float)Result * Multiplier / 5.0;
 }
 
+// Connected directly from the battery to the ADC.
+// We scale this value into one byte using the fact that the voltage will always be
+// between 0.5 and 2V if we are turned on.
+// Convert back to actual voltage using:
+// actual = 0.5 + 1.5*raw/255.0
+uint8_t GetBattVoltage(){
+  float batt_reading = analogRead(BATT_ADC)*3.3/1024.0;
+  return (uint8_t)((batt_reading-0.5) / (1.5/255.0));
+}
+
+// Connected via a 15K/4.7K Voltage Divider. Therefore, we multiply value by 4.9 to get actual voltage.
+// We scale to one byte by assume the voltage will be between 0 and 5V. (Valid, I guess...)
+// Scale back up using:
+// actual = raw * 5.0/255.0
+uint8_t GetPyroVoltage(){
+  float batt_reading = 4.19*analogRead(PYRO_ADC)*3.3/1024.0;
+  return (uint8_t)((batt_reading) / (5.0/255.0));
+}
