@@ -396,7 +396,7 @@ void CheckLoRaRx(void)
           uint8_t cut_time = Sentence[6];
           uint8_t cutdown_count = 0;
           
-          //Send ACK packet with appropriate values
+          //Send ACK packet immediately
           ackPacket(pkt_rssi, pkt_snr, cut_time, 0);
           
           //Sanitize
@@ -410,27 +410,25 @@ void CheckLoRaRx(void)
             cut_time = 1;
           }
 
-          //Perform cutdown burn
-          digitalWrite(LED_WARN, HIGH);
-          digitalWrite(PYRO_ENABLE, HIGH);
-
-          for(uint8_t i=0; i<cut_time; i++)
-          {
-            delay(1000);
-          }
-
-          digitalWrite(PYRO_ENABLE,LOW);
-          digitalWrite(LED_WARN,LOW);
-
+          // Do the attempt indexing first, due to EEPROM write access time
           cutdown_count = EEPROM.read(EEPROM_CUTDOWN_ATT);
           cutdown_count = cutdown_count + 1;
           EEPROM.write(EEPROM_CUTDOWN_ATT, cutdown_count);
+
+          // Perform cutdown burn, burn disabled within main loop
+          digitalWrite(LED_WARN, HIGH);
+          digitalWrite(PYRO_ENABLE, HIGH);
+
+          cutdownEnable = true;
+          startAlt_m = GPS.Altitude;
+          startTime_ms = millis();
+          burnTime_s = cut_time;
         
           GroundCount++;
         }
         else if (Sentence[0] == PARAM_PACKET)
         {
-          // Parameter change command. ACK immediately unless password missmatch.
+          // Parameter change command. ACK once change complete.
           
           if(!(Sentence[3]==AUTH_0 && Sentence[4]==AUTH_1 && Sentence[5] == AUTH_2))
           {
@@ -454,7 +452,7 @@ void CheckLoRaRx(void)
           {
             
           }
-          else if(index == 3)  // TDMA Slot Number
+          else if(index == 3)  // TODO: TDMA Slot Number may be obsolete due to calculations based on ID to det slot?
           {
             
           }
@@ -489,7 +487,7 @@ void CheckLoRaRx(void)
         }
         else if (Sentence[0] == SHORT_TELEM_PACKET)
         {
-          
+          //This packet type is not currently in use.
         }
         else{
           return;

@@ -148,8 +148,12 @@ int SentenceCounter=0;
 
 // Mission Abort verification variables
 unsigned long startTime_ms = 0;
+unsigned long currentTime_ms = 0;
 uint16_t startAlt_m = 0;
+uint16_t currentAlt_m = 0;
+uint8_t burnTime_s = 0;
 bool cutdownEnable = false;
+const uint8_t deltaAlt_m = 50;
 
 
 //------------------------------------------------------------------------------------------------------
@@ -259,6 +263,25 @@ void loop()
 
   if(cutdownEnable == true)
   {
+    currentTime_ms = millis();
+
+    //if the desired amount of time has elapsed
+    if((startTime_ms - currentTime_ms) > (burnTime_s * 1000))
+    {
+      // Pyro off
+      digitalWrite(PYRO_ENABLE,LOW);
+      digitalWrite(LED_WARN,LOW);
+
+      // Get Altitude and clear flags
+      currentAlt_m = GPS.Altitude;
+      cutdownEnable = false;
+
+      // If payload has fallen far enough to consider this cutdown effective
+      if((startAlt_m - currentAlt_m) > deltaAlt_m)
+      {
+        EEPROM.write(EEPROM_CUTDOWN_SUC, 1);
+      }
+    }
     
   }
 
