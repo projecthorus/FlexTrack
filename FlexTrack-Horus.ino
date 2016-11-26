@@ -199,9 +199,8 @@ void setup()
   SetupLoRa();
 #endif
 
-//TODO send a telem packet on start to announce
-  CheckLoRa();
-
+//TODO: send a telem packet on start to announce
+  
 }
 
 void DeviceID()

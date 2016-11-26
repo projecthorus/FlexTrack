@@ -79,7 +79,6 @@
 #define BANDWIDTH_500K              0x90
 
 // Modem Config 2
-
 #define SPREADING_6                 0x60
 #define SPREADING_7                 0x70
 #define SPREADING_8                 0x80
@@ -110,6 +109,14 @@
 #define REG_LNA                     0x0C
 #define LNA_MAX_GAIN                0x23  // 0010 0011
 #define LNA_OFF_GAIN                0x00
+
+// Packet Types
+#define TELEM_PACKET 0
+#define TEXT_PACKET 1
+#define CUTDOWN_PACKET 2
+#define PARAM_PACKET 3
+#define ACK_PACKET 4
+#define SHORT_TELEM_PACKET 5
 
 
 typedef enum {lmIdle, lmListening, lmSending} tLoRaMode;
@@ -274,7 +281,8 @@ void setMode(byte newMode)
   } 
   
   
-  if(newMode != RF98_MODE_SLEEP){
+  if(newMode != RF98_MODE_SLEEP)
+  {
     while(digitalRead(LORA_DIO5) == 0)
     {
     } 
@@ -347,7 +355,7 @@ void CheckLoRaRx(void)
       Bytes = min(Bytes, sizeof(Sentence));
 
       // Delay for a short amount of time, to allow the ground stations to switch back into RX mode.
-      delay(500);
+      delay(250);
 					
       if (Bytes > 0)
       {
@@ -358,12 +366,12 @@ void CheckLoRaRx(void)
         }
 
         // If we're here, the message is directed at us!
-        if (Sentence[0] == '0')
+        if (Sentence[0] == TELEM_PACKET)
         {
           // Binary Telemetry. Ignore. Not even sure we should ever get here.
           Serial.println(F("Rx Binary Packet")); 
         }
-        else if (Sentence[0] == '1')
+        else if (Sentence[0] == TEXT_PACKET)
         {
           // Text Message Packet. Repeat Immediately.
 
@@ -374,22 +382,21 @@ void CheckLoRaRx(void)
 
           GroundCount++;
         }
-        else if (Sentence[0] == '2')
-        {
-          
+        else if (Sentence[0] == CUTDOWN_PACKET)
+        {          
           // Cut-down command. Check the auth code, ACK, then act on the command.
-          if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2)){
+          if(!(Sentence[3]==AUTH_0 && Sentence[4]==AUTH_1 && Sentence[5] == AUTH_2))
+          {
             return;
           }
 
-          
           // Capture parameter and param-value from packet before overwrite
           uint8_t cut_time = Sentence[6];
           uint8_t cutdown_count = 0;
           
           //Send ACK packet with appropriate values
           ackPacket(pkt_rssi, pkt_snr, cut_time, 0);
-
+          
           //Sanitize
           if(cut_time > 10)
           {
@@ -419,11 +426,12 @@ void CheckLoRaRx(void)
         
           GroundCount++;
         }
-        else if (Sentence[0] == '3')
+        else if (Sentence[0] == PARAM_PACKET)
         {
           // Parameter change command. ACK immediately unless password missmatch.
           
-          if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2)){
+          if(!(Sentence[3]==AUTH_0 && Sentence[4]==AUTH_1 && Sentence[5] == AUTH_2))
+          {
             return;
           }
 
@@ -432,13 +440,15 @@ void CheckLoRaRx(void)
           uint8_t value = Sentence[7];
 
           //Send ACK packet with appropriate values
-          ackPacket(pkt_rssi, pkt_snr, index, value);
-          
+          ackPacket(pkt_rssi, pkt_snr, index, value);     
           
           // Now work out what parameter we have been asked to change.
-          if(index == 0){ // Dummy parameter. No changes.
+          if(index == 0)
+          { // Dummy parameter. No changes.
               // Nothing
-          }else if(index == 1){ //TODO may be obsolete due to shift to TDMA based network
+          }
+          else if(index == 1) //TODO may be obsolete due to shift to TDMA based network
+          { 
             
           }
           else if(index == 2)  // Enable/disable TDMA mode
@@ -452,12 +462,6 @@ void CheckLoRaRx(void)
 
           else if(index == 4) // Payload ID
           {
-            if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2))
-            {
-            return;
-            }
-
-          ackPacket(pkt_rssi, pkt_snr, index, value);
 
           //sanitize input
             if(value > 0 && value < 255)
@@ -467,16 +471,10 @@ void CheckLoRaRx(void)
             }
             
           }
-
+          
           else if(index == 5) // Number of payloads
           {
-            if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2))
-            {
-            return;
-            }
-
-          ackPacket(pkt_rssi, pkt_snr, index, value);
-
+            
           //sanitize input
             if(value > 0 && value < 255)
             {
@@ -487,6 +485,10 @@ void CheckLoRaRx(void)
           }
             
           GroundCount++;
+        }
+        else if (Sentence[0] == SHORT_TELEM_PACKET)
+        {
+          
         }
         else{
           return;
