@@ -12,6 +12,7 @@
 \*------------------------------------------------------------------------------------------------------*/
 
 #include <avr/pgmspace.h>
+#include <EEPROM.h>
 
 //------------------------------------------------------------------------------------------------------
 
@@ -20,14 +21,24 @@
 // Edit this section to choose the hardware design and set your payload ID etc
 
 // PRIMARY PAYLOAD SETTINGS
-#define PAYLOAD_ID          0
+uint8_t PAYLOAD_ID = 0;                   //ID Numder of payload, initialized at 0 to detect power cycle/brownout and re-load from EEPROM
 #define USE_TDMA            1             // Comment out to disable TDMA by default.
-#define TOTAL_PAYLOADS      1             // Total number of payloads in the TDMA system.
+uint8_t TOTAL_PAYLOADS = 0;             // Total number of payloads in the TDMA system.
 #define LORA_FREQUENCY      431.650       // Primary operating frequency.
 #define BACKUP_FREQUENCY    449.900       // Backup frequency in case GPS lock is lost.
 
+#define FAILSAFE_PAYLOAD_ID  9
+#define FAILSAFE_TOTAL_PAYLOADS  1
 
-// Authentication for Cutdown & Parameter Change Uplink commands.
+// EEPROM Addresses for NV storage
+
+#define EEPROM_PAYLOAD_ID_ADDR   0
+#define EEPROM_PAYLOAD_NUM_ADDR  1
+#define EEPROM_CUTDOWN_ATT    3
+#define EEPROM_CUTDOWN_SUC    4
+
+
+// Authentication for Cutdown & Parameter Change Uplink commands  (ASCII byte).
 #define AUTH_0  65
 #define AUTH_1  65
 #define AUTH_2  65
@@ -137,6 +148,8 @@ struct TGPS
 
 int SentenceCounter=0;
 
+
+
 //------------------------------------------------------------------------------------------------------
 
 void setup()
@@ -179,16 +192,60 @@ void setup()
   SetupGPS();
   
   SetupADC();
+
+  DeviceID();
   
 #ifdef LORA_NSS
   SetupLoRa();
 #endif
 
+//TODO send a telem packet on start to announce
+  CheckLoRa();
+
+}
+
+void DeviceID()
+{
+  
+  // Check the device ID and number of payloads
+  uint8_t Prom_ID = 0;
+  uint8_t Pay_Num = 0;
+  
+  if(PAYLOAD_ID == 0 || TOTAL_PAYLOADS == 0)
+  {
+    // if null, read from EEPROM
+    Prom_ID = EEPROM.read(EEPROM_PAYLOAD_ID_ADDR);
+    Pay_Num = EEPROM.read(EEPROM_PAYLOAD_NUM_ADDR);
+    
+    // if EEPROM values null, set to contingency values
+    if(Prom_ID == 0 || Prom_ID > 10)
+    {
+      PAYLOAD_ID = FAILSAFE_PAYLOAD_ID; 
+    }
+    else
+    {
+      PAYLOAD_ID = Prom_ID;
+    }
+
+    if(Pay_Num == 0 || Pay_Num > 10)
+    {
+      TOTAL_PAYLOADS = FAILSAFE_TOTAL_PAYLOADS;
+    }
+    else
+    {
+      TOTAL_PAYLOADS = Pay_Num;
+    }
+
+    
+  }
+  // return
 }
 
 
 void loop()
 {  
+  DeviceID();   //Check this in case of power-cycle or brownout
+  
   CheckGPS();
   
 #ifdef LORA_NSS
@@ -198,6 +255,7 @@ void loop()
   CheckADC();
   
   CheckLEDs();
+
 }
 
 

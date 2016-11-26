@@ -20,6 +20,7 @@
 #ifdef LORA_NSS
 
 #include <SPI.h>
+#include <EEPROM.h>
 #include <string.h>
 
 // RFM98 registers
@@ -110,19 +111,24 @@
 #define LNA_MAX_GAIN                0x23  // 0010 0011
 #define LNA_OFF_GAIN                0x00
 
+
 typedef enum {lmIdle, lmListening, lmSending} tLoRaMode;
 
 tLoRaMode LoRaMode;
 byte currentMode = 0x81;
 int TargetID;
 struct TBinaryPacket PacketToRepeat;
-byte SendRepeatedPacket, RepeatedPacketType=0;
+byte SendRepeatedPacket;
+byte RepeatedPacketType=0;
 int ImplicitOrExplicit;
 uint8_t GroundCount;
 int AirCount;
 int BadCRCCount;
 unsigned char Sentence[SENTENCE_LENGTH];
 unsigned long LastLoRaTX=0;
+
+long AltAtCutdown = 0;
+long AltPostCutdown = 0;
 
 void SetupLoRa(void)
 {
@@ -234,7 +240,7 @@ void setLoRaMode()
 }
 
 /////////////////////////////////////
-//    Method:   Change the mode
+//    Method:   Change the LoRa module mode
 //////////////////////////////////////
 void setMode(byte newMode)
 {
@@ -245,7 +251,7 @@ void setMode(byte newMode)
   {
     case RF98_MODE_TX:
       writeRegister(REG_LNA, LNA_OFF_GAIN);  // TURN LNA OFF FOR TRANSMITT
-      writeRegister(REG_PA_CONFIG, PA_MAX_VK); // Modified for Project Horus fork
+      writeRegister(REG_PA_CONFIG, PA_MAX_BOOST); // Modified for Project Horus fork
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       
@@ -279,7 +285,7 @@ void setMode(byte newMode)
 
 
 /////////////////////////////////////
-//    Method:   Read Register
+//    Method:   Read LoRa module Register
 //////////////////////////////////////
 
 byte readRegister(byte addr)
@@ -292,7 +298,7 @@ byte readRegister(byte addr)
 }
 
 /////////////////////////////////////
-//    Method:   Write Register
+//    Method:   Write LoRa module Register
 //////////////////////////////////////
 
 void writeRegister(byte addr, byte value)
@@ -362,18 +368,124 @@ void CheckLoRaRx(void)
           // Text Message Packet. Repeat Immediately.
 
           // Set the 'is repeated' flag, then re-transmit the text message.
+          Sentence[1] = 1;
+
+          SendLoRaPacket(Sentence, Bytes);
 
           GroundCount++;
         }
         else if (Sentence[0] == '2')
         {
+          
           // Cut-down command. Check the auth code, ACK, then act on the command.
+          if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2)){
+            return;
+          }
 
+          
+          // Capture parameter and param-value from packet before overwrite
+          uint8_t cut_time = Sentence[6];
+          uint8_t cutdown_count = 0;
+          
+          //Send ACK packet with appropriate values
+          ackPacket(pkt_rssi, pkt_snr, cut_time, 0);
+
+          //Sanitize
+          if(cut_time > 10)
+          {
+            cut_time = 10;
+          }
+
+          if(cut_time < 2)
+          {
+            cut_time = 1;
+          }
+
+          //Perform cutdown burn
+          digitalWrite(LED_WARN, HIGH);
+          digitalWrite(PYRO_ENABLE, HIGH);
+
+          for(uint8_t i=0; i<cut_time; i++)
+          {
+            delay(1000);
+          }
+
+          digitalWrite(PYRO_ENABLE,LOW);
+          digitalWrite(LED_WARN,LOW);
+
+          cutdown_count = EEPROM.read(EEPROM_CUTDOWN_ATT);
+          cutdown_count = cutdown_count + 1;
+          EEPROM.write(EEPROM_CUTDOWN_ATT, cutdown_count);
+        
           GroundCount++;
         }
         else if (Sentence[0] == '3')
         {
-          // Parameter change command. ACK immediately.
+          // Parameter change command. ACK immediately unless password missmatch.
+          
+          if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2)){
+            return;
+          }
+
+          // Capture parameter and param-value from packet before overwrite
+          uint8_t index = Sentence[6];
+          uint8_t value = Sentence[7];
+
+          //Send ACK packet with appropriate values
+          ackPacket(pkt_rssi, pkt_snr, index, value);
+          
+          
+          // Now work out what parameter we have been asked to change.
+          if(index == 0){ // Dummy parameter. No changes.
+              // Nothing
+          }else if(index == 1){ //TODO may be obsolete due to shift to TDMA based network
+            
+          }
+          else if(index == 2)  // Enable/disable TDMA mode
+          {
+            
+          }
+          else if(index == 3)  // TDMA Slot Number
+          {
+            
+          }
+
+          else if(index == 4) // Payload ID
+          {
+            if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2))
+            {
+            return;
+            }
+
+          ackPacket(pkt_rssi, pkt_snr, index, value);
+
+          //sanitize input
+            if(value > 0 && value < 255)
+            {
+              PAYLOAD_ID = value;
+              EEPROM.write(EEPROM_PAYLOAD_ID_ADDR, value);
+            }
+            
+          }
+
+          else if(index == 5) // Number of payloads
+          {
+            if(!(Sentence[2]==AUTH_0 && Sentence[3]==AUTH_1 && Sentence[4] == AUTH_2))
+            {
+            return;
+            }
+
+          ackPacket(pkt_rssi, pkt_snr, index, value);
+
+          //sanitize input
+            if(value > 0 && value < 255)
+            {
+              TOTAL_PAYLOADS = value;
+              EEPROM.write(EEPROM_PAYLOAD_NUM_ADDR, value);
+            }
+            
+          }
+            
           GroundCount++;
         }
         else{
@@ -406,7 +518,7 @@ int TimeToSend(void)
   }
   // Horus: Note that this TDMA stuffis only going to work if we have GPS lock.
   // We should probably consider a backup option (that's better than the 'timeout' solution above.)
-  if (GPS.Satellites > 0) 
+  if (GPS.Satellites > 2) 
   {
     static int LastCycleSeconds=-1;
 
@@ -428,7 +540,6 @@ int TimeToSend(void)
     
   return 0;
 }
-
 
 int LoRaIsFree(void)
 {
@@ -499,6 +610,24 @@ void SendLoRaPacket(unsigned char *buffer, int Length)
   setMode(RF98_MODE_TX);
   
   LoRaMode = lmSending;
+}
+
+void ackPacket(uint8_t rssi, uint8_t snr, uint8_t paramIndex, uint8_t paramValue)
+{
+  const uint8_t ACK_LENGTH = 8;
+  unsigned char AckPayload[ACK_LENGTH];
+  
+  AckPayload[0] = 4; // ACK Packet.
+  AckPayload[1] = 0;
+  AckPayload[2] = PAYLOAD_ID;
+  AckPayload[3] = rssi;
+  AckPayload[4] = snr;
+  AckPayload[5] = 3;
+  AckPayload[6] = paramIndex;  
+  AckPayload[7] = paramValue;  
+  
+  //Send ACK packet
+  SendLoRaPacket(AckPayload, ACK_LENGTH);
 }
 
 void startReceiving(void)
