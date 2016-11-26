@@ -50,11 +50,9 @@ uint8_t TOTAL_PAYLOADS = 0;             // Total number of payloads in the TDMA 
 #define POWERSAVING	                      // Comment out to disable GPS power saving
 
 // LORA settings
-#define LORA_SLOT            (PAYLOAD_ID-1)*5
 #define LORA_REPEAT_SLOT_1   0
 #define LORA_REPEAT_SLOT_2   0
 #define LORA_ID              PAYLOAD_ID
-#define LORA_CYCLETIME       5*TOTAL_PAYLOADS // Set to zero to send continuously
 #define LORA_MODE            0
 #define LORA_BINARY          1              // Use binary packets exclusively.
 #define LORA_LISTEN_TIME     10000L         // Time spent listening for uplink packets, when in non-TDMA mode.
@@ -148,6 +146,10 @@ struct TGPS
 
 int SentenceCounter=0;
 
+// Mission Abort verification variables
+unsigned long startTime_ms = 0;
+uint16_t startAlt_m = 0;
+bool cutdownEnable = false;
 
 
 //------------------------------------------------------------------------------------------------------
@@ -254,6 +256,11 @@ void loop()
   CheckADC();
   
   CheckLEDs();
+
+  if(cutdownEnable == true)
+  {
+    
+  }
 
 }
 

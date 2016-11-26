@@ -134,8 +134,10 @@ int BadCRCCount;
 unsigned char Sentence[SENTENCE_LENGTH];
 unsigned long LastLoRaTX=0;
 
-long AltAtCutdown = 0;
-long AltPostCutdown = 0;
+
+
+uint8_t LoRa_Slot = 0;
+uint8_t LoRa_CycleTime = 0;
 
 void SetupLoRa(void)
 {
@@ -258,7 +260,7 @@ void setMode(byte newMode)
   {
     case RF98_MODE_TX:
       writeRegister(REG_LNA, LNA_OFF_GAIN);  // TURN LNA OFF FOR TRANSMITT
-      writeRegister(REG_PA_CONFIG, PA_MAX_BOOST); // Modified for Project Horus fork
+      writeRegister(REG_PA_CONFIG, PA_MAX_VK); // Modified for Project Horus fork
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       
@@ -438,10 +440,7 @@ void CheckLoRaRx(void)
           // Capture parameter and param-value from packet before overwrite
           uint8_t index = Sentence[6];
           uint8_t value = Sentence[7];
-
-          //Send ACK packet with appropriate values
-          ackPacket(pkt_rssi, pkt_snr, index, value);     
-          
+         
           // Now work out what parameter we have been asked to change.
           if(index == 0)
           { // Dummy parameter. No changes.
@@ -483,7 +482,9 @@ void CheckLoRaRx(void)
             }
             
           }
-            
+
+          //Send ACK packet with appropriate values
+          ackPacket(pkt_rssi, pkt_snr, index, value);     
           GroundCount++;
         }
         else if (Sentence[0] == SHORT_TELEM_PACKET)
@@ -500,11 +501,15 @@ void CheckLoRaRx(void)
 
 int TimeToSend(void)
 {
+  // TODO: LoRa_Slot and LoRa_CycleTime need to be calculated *at runtime* not constants written at compile time, per MJ
+  LoRa_Slot = (PAYLOAD_ID-1)*5;
+  LoRa_CycleTime = 5*TOTAL_PAYLOADS; // Set to zero to send continuously
+  
   int CycleSeconds;
 	
   SendRepeatedPacket = 0; // Horus: I don't think this variable is used any more.
 
-  if (LORA_CYCLETIME == 0)
+  if (LoRa_CycleTime == 0)
   {
     // Not using time to decide when we can send
     // Horus: Should modify this so that it listens for a bit instead of just TXing constantly.
@@ -512,7 +517,7 @@ int TimeToSend(void)
     return 1;
   }
 
-  if (millis() > (LastLoRaTX + LORA_CYCLETIME*1000+2000))
+  if (millis() > (LastLoRaTX + LoRa_CycleTime*1000+2000))
   {
     // Timed out. Transmit anyway. 
     // Horus: Not 100% sure we want this. May end up with collisions.
@@ -520,19 +525,19 @@ int TimeToSend(void)
   }
   // Horus: Note that this TDMA stuffis only going to work if we have GPS lock.
   // We should probably consider a backup option (that's better than the 'timeout' solution above.)
-  if (GPS.Satellites > 2) 
+  if (GPS.Satellites > 1) 
   {
     static int LastCycleSeconds=-1;
 
     // Can't Tx twice at the same time
-    CycleSeconds = GPS.SecondsInDay % LORA_CYCLETIME;
+    CycleSeconds = GPS.SecondsInDay % LoRa_CycleTime;
     
     if (CycleSeconds != LastCycleSeconds)
     {
       LastCycleSeconds = CycleSeconds;
       
       // If we're in our slot, then transmit.
-      if (CycleSeconds == LORA_SLOT)
+      if (CycleSeconds == LoRa_Slot)
       {
         SendRepeatedPacket = 0;
         return 1;
@@ -567,7 +572,7 @@ int LoRaIsFree(void)
       return 1;
     }
     
-    if (LORA_CYCLETIME > 0)
+    if (LoRa_CycleTime > 0)
     {
       // TDM system and not time to send, so we can listen
       if (LoRaMode == lmIdle)
@@ -713,6 +718,7 @@ int BuildLoRaPositionPacket(unsigned char *TxLine)
 	
   return sizeof(struct TBinaryPacket);
 }
+
 
 void CheckLoRa(void)
 {
