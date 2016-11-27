@@ -264,9 +264,10 @@ void loop()
   if(cutdownEnable == true)
   {
     currentTime_ms = millis();
+    digitalWrite(LED_WARN, HIGH);
 
     //if the desired amount of time has elapsed
-    if((startTime_ms - currentTime_ms) > (burnTime_s * 1000))
+    if((currentTime_ms - startTime_ms) > (burnTime_s * 1000UL))
     {
       // Pyro off
       digitalWrite(PYRO_ENABLE,LOW);
