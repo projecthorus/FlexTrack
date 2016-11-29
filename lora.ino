@@ -20,6 +20,7 @@
 #ifdef LORA_NSS
 
 #include <SPI.h>
+#include <EEPROM.h>
 #include <string.h>
 
 // RFM98 registers
@@ -78,7 +79,6 @@
 #define BANDWIDTH_500K              0x90
 
 // Modem Config 2
-
 #define SPREADING_6                 0x60
 #define SPREADING_7                 0x70
 #define SPREADING_8                 0x80
@@ -110,19 +110,36 @@
 #define LNA_MAX_GAIN                0x23  // 0010 0011
 #define LNA_OFF_GAIN                0x00
 
+// Packet Types
+#define TELEM_PACKET 0
+#define TEXT_PACKET 1
+#define CUTDOWN_PACKET 2
+#define PARAM_PACKET 3
+#define ACK_PACKET 4
+#define SHORT_TELEM_PACKET 5
+
+#define BROADCAST_ADDRESS 254
+
+
 typedef enum {lmIdle, lmListening, lmSending} tLoRaMode;
 
 tLoRaMode LoRaMode;
 byte currentMode = 0x81;
 int TargetID;
 struct TBinaryPacket PacketToRepeat;
-byte SendRepeatedPacket, RepeatedPacketType=0;
+byte SendRepeatedPacket;
+byte RepeatedPacketType=0;
 int ImplicitOrExplicit;
 uint8_t GroundCount;
 int AirCount;
 int BadCRCCount;
 unsigned char Sentence[SENTENCE_LENGTH];
 unsigned long LastLoRaTX=0;
+
+
+
+uint8_t LoRa_Slot = 0;
+uint8_t LoRa_CycleTime = 0;
 
 void SetupLoRa(void)
 {
@@ -234,7 +251,7 @@ void setLoRaMode()
 }
 
 /////////////////////////////////////
-//    Method:   Change the mode
+//    Method:   Change the LoRa module mode
 //////////////////////////////////////
 void setMode(byte newMode)
 {
@@ -248,27 +265,31 @@ void setMode(byte newMode)
       writeRegister(REG_PA_CONFIG, PA_MAX_VK); // Modified for Project Horus fork
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
-      
       break;
+      
     case RF98_MODE_RX_CONTINUOUS:
       writeRegister(REG_PA_CONFIG, PA_OFF_BOOST);  // TURN PA OFF FOR RECIEVE??
       writeRegister(REG_LNA, LNA_MAX_GAIN);  // MAX GAIN FOR RECIEVE
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       break;
+      
     case RF98_MODE_SLEEP:
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       break;
+      
     case RF98_MODE_STANDBY:
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       break;
+      
     default: return;
   } 
   
   
-  if(newMode != RF98_MODE_SLEEP){
+  if(newMode != RF98_MODE_SLEEP)
+  {
     while(digitalRead(LORA_DIO5) == 0)
     {
     } 
@@ -279,7 +300,7 @@ void setMode(byte newMode)
 
 
 /////////////////////////////////////
-//    Method:   Read Register
+//    Method:   Read LoRa module Register
 //////////////////////////////////////
 
 byte readRegister(byte addr)
@@ -292,7 +313,7 @@ byte readRegister(byte addr)
 }
 
 /////////////////////////////////////
-//    Method:   Write Register
+//    Method:   Write LoRa module Register
 //////////////////////////////////////
 
 void writeRegister(byte addr, byte value)
@@ -341,40 +362,140 @@ void CheckLoRaRx(void)
       Bytes = min(Bytes, sizeof(Sentence));
 
       // Delay for a short amount of time, to allow the ground stations to switch back into RX mode.
-      delay(500);
+      delay(250);
 					
       if (Bytes > 0)
       {
         // Only act on messages addressed to us.
-        if (Sentence[2] != PAYLOAD_ID){
+        if (Sentence[2] != PAYLOAD_ID)
+        {
           Serial.println(F("Packet not for us. Ignoring"));
           return;
         }
 
         // If we're here, the message is directed at us!
-        if (Sentence[0] == '0')
+        if (Sentence[0] == TELEM_PACKET)
         {
           // Binary Telemetry. Ignore. Not even sure we should ever get here.
           Serial.println(F("Rx Binary Packet")); 
         }
-        else if (Sentence[0] == '1')
+        else if (Sentence[0] == TEXT_PACKET)
         {
+          //TODO: do we want broadcast access to this??
+          
           // Text Message Packet. Repeat Immediately.
 
           // Set the 'is repeated' flag, then re-transmit the text message.
+          Sentence[1] = 1;
+
+          SendLoRaPacket(Sentence, Bytes);
 
           GroundCount++;
         }
-        else if (Sentence[0] == '2')
-        {
+        else if (Sentence[0] == CUTDOWN_PACKET)
+        {          
           // Cut-down command. Check the auth code, ACK, then act on the command.
+          if(!(Sentence[3]==AUTH_0 && Sentence[4]==AUTH_1 && Sentence[5] == AUTH_2))
+          {
+            return;
+          }
 
+          // Capture parameter and param-value from packet before overwrite
+          uint8_t cut_time = Sentence[6];
+          uint8_t cutdown_count = 0;
+          
+          //Send ACK packet immediately
+          ackPacket(pkt_rssi, pkt_snr, cut_time, 0);
+          
+          //Sanitize
+          if(cut_time > 10)
+          {
+            cut_time = 10;
+          }
+
+          if(cut_time < 2)
+          {
+            cut_time = 1;
+          }
+
+          // Do the attempt indexing first, due to EEPROM write access time
+          cutdown_count = EEPROM.read(EEPROM_CUTDOWN_ATT);
+          cutdown_count = cutdown_count + 1;
+          EEPROM.write(EEPROM_CUTDOWN_ATT, cutdown_count);
+
+          // Perform cutdown burn, burn disabled within main loop
+          digitalWrite(LED_WARN, HIGH);
+          digitalWrite(PYRO_ENABLE, HIGH);
+
+          cutdownEnable = true;
+          startAlt_m = GPS.Altitude;
+          startTime_ms = millis();
+          burnTime_s = cut_time;
+        
           GroundCount++;
         }
-        else if (Sentence[0] == '3')
+        else if (Sentence[0] == PARAM_PACKET)
         {
-          // Parameter change command. ACK immediately.
+          // Parameter change command. ACK once change complete.
+          
+          if(!(Sentence[3]==AUTH_0 && Sentence[4]==AUTH_1 && Sentence[5] == AUTH_2))
+          {
+            return;
+          }
+
+          // Capture parameter and param-value from packet before overwrite
+          uint8_t index = Sentence[6];
+          uint8_t value = Sentence[7];
+         
+          // Now work out what parameter we have been asked to change.
+          if(index == 0)
+          { // Dummy parameter. No changes.
+              // Nothing
+          }
+          else if(index == 1) //TODO may be obsolete due to shift to TDMA based network
+          { 
+            
+          }
+          else if(index == 2)  // Enable/disable TDMA mode
+          {
+            
+          }
+          else if(index == 3)  // TODO: TDMA Slot Number may be obsolete due to calculations based on ID to det slot?
+          {
+            
+          }
+
+          else if(index == 4) // Payload ID
+          {
+
+          //sanitize input
+            if(value > 0 && value < 255)
+            {
+              PAYLOAD_ID = value;
+              EEPROM.write(EEPROM_PAYLOAD_ID_ADDR, value);
+            }
+            
+          }
+          
+          else if(index == 5) // Number of payloads
+          {
+            
+          //sanitize input
+            if(value > 0 && value < 255)
+            {
+              TOTAL_PAYLOADS = value;
+              EEPROM.write(EEPROM_PAYLOAD_NUM_ADDR, value);
+            }
+            
+          }
+
+          //Send ACK packet with appropriate values
+          ackPacket(pkt_rssi, pkt_snr, index, value);     
           GroundCount++;
+        }
+        else if (Sentence[0] == SHORT_TELEM_PACKET)
+        {
+          //This packet type is not currently in use.
         }
         else{
           return;
@@ -386,11 +507,15 @@ void CheckLoRaRx(void)
 
 int TimeToSend(void)
 {
+  // TODO: LoRa_Slot and LoRa_CycleTime need to be calculated *at runtime* not constants written at compile time, per MJ
+  LoRa_Slot = (PAYLOAD_ID-1)*5;
+  LoRa_CycleTime = 5*TOTAL_PAYLOADS; // Set to zero to send continuously
+  
   int CycleSeconds;
 	
   SendRepeatedPacket = 0; // Horus: I don't think this variable is used any more.
 
-  if (LORA_CYCLETIME == 0)
+  if (LoRa_CycleTime == 0)
   {
     // Not using time to decide when we can send
     // Horus: Should modify this so that it listens for a bit instead of just TXing constantly.
@@ -398,27 +523,27 @@ int TimeToSend(void)
     return 1;
   }
 
-  if (millis() > (LastLoRaTX + LORA_CYCLETIME*1000+2000))
+  if (millis() > (LastLoRaTX + LoRa_CycleTime*1000+2000)) // TODO: do these need to be longs?  Or is this obsolete?
   {
     // Timed out. Transmit anyway. 
     // Horus: Not 100% sure we want this. May end up with collisions.
     return 1;
   }
-  // Horus: Note that this TDMA stuffis only going to work if we have GPS lock.
+  // Horus: Note that this TDMA stuff is only going to work if we have GPS lock.
   // We should probably consider a backup option (that's better than the 'timeout' solution above.)
-  if (GPS.Satellites > 0) 
+  if (GPS.Satellites > 1) 
   {
     static int LastCycleSeconds=-1;
 
     // Can't Tx twice at the same time
-    CycleSeconds = GPS.SecondsInDay % LORA_CYCLETIME;
+    CycleSeconds = GPS.SecondsInDay % LoRa_CycleTime;
     
-    if (CycleSeconds != LastCycleSeconds)
+    if (CycleSeconds != LastCycleSeconds)   // TODO: How can CycleSeconds = LastCycleSeconds = -1 when CycSec is result of a modulo?
     {
-      LastCycleSeconds = CycleSeconds;
+        LastCycleSeconds = CycleSeconds;  
       
       // If we're in our slot, then transmit.
-      if (CycleSeconds == LORA_SLOT)
+      if (CycleSeconds == LoRa_Slot)
       {
         SendRepeatedPacket = 0;
         return 1;
@@ -429,8 +554,7 @@ int TimeToSend(void)
   return 0;
 }
 
-
-int LoRaIsFree(void)
+bool LoRaIsFree(void)    // TODO: from usage, the return of this function should be a boolean
 {
   if ((LoRaMode != lmSending) || digitalRead(LORA_DIO0))
   {
@@ -451,10 +575,10 @@ int LoRaIsFree(void)
       // Either sending continuously, or it's our slot to send in
       // printf("Channel %d is free\n", Channel);
 					
-      return 1;
+      return true;
     }
     
-    if (LORA_CYCLETIME > 0)
+    if (LoRa_CycleTime > 0)
     {
       // TDM system and not time to send, so we can listen
       if (LoRaMode == lmIdle)
@@ -464,7 +588,7 @@ int LoRaIsFree(void)
     }
   }
   
-  return 0;
+  return false;
 }
 
 void SendLoRaPacket(unsigned char *buffer, int Length)
@@ -499,6 +623,24 @@ void SendLoRaPacket(unsigned char *buffer, int Length)
   setMode(RF98_MODE_TX);
   
   LoRaMode = lmSending;
+}
+
+void ackPacket(uint8_t rssi, uint8_t snr, uint8_t paramIndex, uint8_t paramValue)
+{
+  const uint8_t ACK_LENGTH = 8;
+  unsigned char AckPayload[ACK_LENGTH];
+  
+  AckPayload[0] = 4; // ACK Packet.
+  AckPayload[1] = 0;
+  AckPayload[2] = PAYLOAD_ID;
+  AckPayload[3] = rssi;
+  AckPayload[4] = snr;
+  AckPayload[5] = 3;
+  AckPayload[6] = paramIndex;  
+  AckPayload[7] = paramValue;  
+  
+  //Send ACK packet
+  SendLoRaPacket(AckPayload, ACK_LENGTH);
 }
 
 void startReceiving(void)
@@ -582,6 +724,7 @@ int BuildLoRaPositionPacket(unsigned char *TxLine)
 	
   return sizeof(struct TBinaryPacket);
 }
+
 
 void CheckLoRa(void)
 {
