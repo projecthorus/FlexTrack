@@ -118,6 +118,8 @@
 #define ACK_PACKET 4
 #define SHORT_TELEM_PACKET 5
 
+#define BROADCAST_ADDRESS 254
+
 
 typedef enum {lmIdle, lmListening, lmSending} tLoRaMode;
 
@@ -263,22 +265,25 @@ void setMode(byte newMode)
       writeRegister(REG_PA_CONFIG, PA_MAX_VK); // Modified for Project Horus fork
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
-      
       break;
+      
     case RF98_MODE_RX_CONTINUOUS:
       writeRegister(REG_PA_CONFIG, PA_OFF_BOOST);  // TURN PA OFF FOR RECIEVE??
       writeRegister(REG_LNA, LNA_MAX_GAIN);  // MAX GAIN FOR RECIEVE
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       break;
+      
     case RF98_MODE_SLEEP:
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       break;
+      
     case RF98_MODE_STANDBY:
       writeRegister(REG_OPMODE, newMode);
       currentMode = newMode; 
       break;
+      
     default: return;
   } 
   
@@ -362,7 +367,8 @@ void CheckLoRaRx(void)
       if (Bytes > 0)
       {
         // Only act on messages addressed to us.
-        if (Sentence[2] != PAYLOAD_ID){
+        if (Sentence[2] != PAYLOAD_ID)
+        {
           Serial.println(F("Packet not for us. Ignoring"));
           return;
         }
@@ -375,6 +381,8 @@ void CheckLoRaRx(void)
         }
         else if (Sentence[0] == TEXT_PACKET)
         {
+          //TODO: do we want broadcast access to this??
+          
           // Text Message Packet. Repeat Immediately.
 
           // Set the 'is repeated' flag, then re-transmit the text message.
@@ -515,13 +523,13 @@ int TimeToSend(void)
     return 1;
   }
 
-  if (millis() > (LastLoRaTX + LoRa_CycleTime*1000+2000))
+  if (millis() > (LastLoRaTX + LoRa_CycleTime*1000+2000)) // TODO: do these need to be longs?  Or is this obsolete?
   {
     // Timed out. Transmit anyway. 
     // Horus: Not 100% sure we want this. May end up with collisions.
     return 1;
   }
-  // Horus: Note that this TDMA stuffis only going to work if we have GPS lock.
+  // Horus: Note that this TDMA stuff is only going to work if we have GPS lock.
   // We should probably consider a backup option (that's better than the 'timeout' solution above.)
   if (GPS.Satellites > 1) 
   {
@@ -530,9 +538,9 @@ int TimeToSend(void)
     // Can't Tx twice at the same time
     CycleSeconds = GPS.SecondsInDay % LoRa_CycleTime;
     
-    if (CycleSeconds != LastCycleSeconds)
+    if (CycleSeconds != LastCycleSeconds)   // TODO: How can CycleSeconds = LastCycleSeconds = -1 when CycSec is result of a modulo?
     {
-      LastCycleSeconds = CycleSeconds;
+        LastCycleSeconds = CycleSeconds;  
       
       // If we're in our slot, then transmit.
       if (CycleSeconds == LoRa_Slot)
@@ -546,7 +554,7 @@ int TimeToSend(void)
   return 0;
 }
 
-int LoRaIsFree(void)
+bool LoRaIsFree(void)    // TODO: from usage, the return of this function should be a boolean
 {
   if ((LoRaMode != lmSending) || digitalRead(LORA_DIO0))
   {
@@ -567,7 +575,7 @@ int LoRaIsFree(void)
       // Either sending continuously, or it's our slot to send in
       // printf("Channel %d is free\n", Channel);
 					
-      return 1;
+      return true;
     }
     
     if (LoRa_CycleTime > 0)
@@ -580,7 +588,7 @@ int LoRaIsFree(void)
     }
   }
   
-  return 0;
+  return false;
 }
 
 void SendLoRaPacket(unsigned char *buffer, int Length)
