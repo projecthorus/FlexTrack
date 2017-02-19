@@ -531,7 +531,13 @@ void CheckLoRaRx(void)
             Sentence[12] = 255;
           }
           else{
-            // Hash Callsign.
+            // Hash Callsign. - CRC16-CCITT
+            // Note on hash collisions:
+            // - The VK5 call-space, *without* SSIDs (i.e. -0) is free from collisions.
+            // - The entire VK callspace, *without* SSIDs, has 4 collisions: VK2NW, VK2NXA, VK7PTK and VK8QTT
+            // - Once SSIDs are included, more collisions occur (approx 14 within the VK5 address space)
+            // Conclusion: CRC16-CCITT should be suitable for our purposes.
+
             uint16_t new_call_hash = crc16(&Sentence[3],9);
 
             // Search table to see if callsign is already there.
