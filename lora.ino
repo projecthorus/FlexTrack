@@ -117,6 +117,8 @@
 #define PARAM_PACKET 3
 #define ACK_PACKET 4
 #define SHORT_TELEM_PACKET 5
+#define SLOT_REQUEST 6
+#define CAR_TELEM 7
 
 #define BROADCAST_ADDRESS 254
 
@@ -140,6 +142,9 @@ unsigned long LastLoRaTX=0;
 
 uint8_t LoRa_Slot = 0;
 uint8_t LoRa_CycleTime = 0;
+
+uint8_t current_uplink_slot = 0;
+uint8_t uplink_slots_in_use = 3;
 
 void SetupLoRa(void)
 {
@@ -497,6 +502,22 @@ void CheckLoRaRx(void)
         {
           //This packet type is not currently in use.
         }
+        else if (Sentence[0] == SLOT_REQUEST)
+        {
+          // Set re-transitted flag.
+          Sentence[1] = 1;
+
+          // Set slot ID to 1, as a dummy value for testing purposes.
+          Sentence[12] = 1;
+          // Transmit
+          SendLoRaPacket(Sentence, Bytes);
+        }
+        else if (Sentence[0] == CAR_TELEM)
+        {
+          // Car Telemetry packet. Set 're-transmitted' flag, and rebroadcast immediately.
+          Sentence[1] = 1;
+          SendLoRaPacket(Sentence, Bytes);
+        }
         else{
           return;
         }
@@ -718,7 +739,7 @@ int BuildLoRaPositionPacket(unsigned char *TxLine)
   BinaryPacket.Temp = readRegister(REG_TEMP);
   BinaryPacket.rxPktCount = GroundCount;
   BinaryPacket.rxRSSI = readRegister(REG_RSSI);
-  BinaryPacket.telemFlags = 0; // Horus: We could use this field to indicate a cutdown command has succeeded.
+  BinaryPacket.telemFlags = (current_uplink_slot&0x0F) | (uplink_slots_in_use&0x0F)<<4; // Horus: We could use this field to indicate a cutdown command has succeeded.
 
   memcpy(TxLine, &BinaryPacket, sizeof(BinaryPacket));
 	
@@ -740,7 +761,10 @@ void CheckLoRa(void)
     PacketLength = BuildLoRaPositionPacket(Sentence);
     Serial.println(F("LoRa: Tx Binary packet"));
 						
-    SendLoRaPacket(Sentence, PacketLength);		
+    SendLoRaPacket(Sentence, PacketLength);
+
+    // Increment current uplink slot counter.
+    current_uplink_slot = (current_uplink_slot+1)%(uplink_slots_in_use+1);		
     
   }
 }
