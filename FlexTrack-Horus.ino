@@ -119,7 +119,7 @@ struct TBinaryPacket
   uint8_t   PyroVoltage; // 0 = 0v, 255 = 5.0V, linear steps in-between.
   uint8_t   rxPktCount; // RX Packet Count.
   uint8_t   rxRSSI; // Ambient RSSI value, measured just before transmission.
-  uint8_t   telemFlags; // Various payload flags.
+  uint8_t   uplinkSlots; // High Nibble: Uplink timeslots in use; Low Nibble: Current uplink timeslot.
 };  //  __attribute__ ((packed));
 
 struct TGPS
@@ -155,6 +155,11 @@ uint8_t burnTime_s = 0;
 bool cutdownEnable = false;
 const uint8_t deltaAlt_m = 50;
 
+// Uplink timeslot store.
+uint8_t current_uplink_slot = 0;
+uint8_t uplink_slots_in_use = 3;
+#define MAX_UPLINK_SLOTS 15
+uint16_t uplink_slots[MAX_UPLINK_SLOTS] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
 //------------------------------------------------------------------------------------------------------
 

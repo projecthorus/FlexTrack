@@ -22,6 +22,7 @@
 #include <SPI.h>
 #include <EEPROM.h>
 #include <string.h>
+#include <util/crc16.h>
 
 // RFM98 registers
 #define REG_FIFO                    0x00
@@ -142,9 +143,6 @@ unsigned long LastLoRaTX=0;
 
 uint8_t LoRa_Slot = 0;
 uint8_t LoRa_CycleTime = 0;
-
-uint8_t current_uplink_slot = 0;
-uint8_t uplink_slots_in_use = 3;
 
 void SetupLoRa(void)
 {
@@ -345,6 +343,18 @@ void unselect()
   digitalWrite(LORA_NSS, HIGH);
 }
 
+// Fast CRC16 code, using Atmel's optimized libraries!
+unsigned int crc16(unsigned char *string, unsigned int len) {
+  unsigned int i;
+  unsigned int crc;
+  crc = 0xFFFF; // Standard CCITT seed for CRC16.
+  // Calculate the sum, ignore $ sign's
+  for (i = 0; i < len; i++) {
+    crc = _crc_xmodem_update(crc,(uint8_t)string[i]);
+  }
+  return crc;
+}
+
 // Horus Update:
 // Desired behaviour while listening is to immediately respond to a received packet, then go back to listening again.
 // It's the ground station's responsibility to transmit at an appropriate time that our response doesn't clash with another payload.
@@ -494,6 +504,15 @@ void CheckLoRaRx(void)
             
           }
 
+          else if(index == 6) // Reset uplink timeslot table
+          {
+            current_uplink_slot = 0;
+            uplink_slots_in_use = 0;
+            for(uint8_t k = 0; k<MAX_UPLINK_SLOTS; k++){
+              uplink_slots[k] = 0;
+            }
+          }
+
           //Send ACK packet with appropriate values
           ackPacket(pkt_rssi, pkt_snr, index, value);     
           GroundCount++;
@@ -507,8 +526,40 @@ void CheckLoRaRx(void)
           // Set re-transitted flag.
           Sentence[1] = 1;
 
-          // Set slot ID to 1, as a dummy value for testing purposes.
-          Sentence[12] = 1;
+          if(uplink_slots_in_use == MAX_UPLINK_SLOTS){
+            // All uplink slots in use, return a dummy value (255) indicating this.
+            Sentence[12] = 255;
+          }
+          else{
+            // Hash Callsign.
+            uint16_t new_call_hash = crc16(&Sentence[3],9);
+
+            // Search table to see if callsign is already there.
+            uint8_t new_call_slot = 255;
+            uint8_t k = 0;
+            while (k < MAX_UPLINK_SLOTS){
+              if (uplink_slots[k] == new_call_hash)
+              {
+                // Found callsign in table.
+                new_call_slot = k+1; // Slot = table index + 1
+                break;
+              }
+              else if (uplink_slots[k] == 0)
+              {
+                // Empty slot. Use it!
+                uplink_slots[k] = new_call_hash;
+                new_call_slot = k+1; // Slot = table index + 1
+                uplink_slots_in_use++;
+                break;
+              }
+              else{
+                // Shouldn't ever get here.. 
+              }
+              k++;
+            }
+            Sentence[12] = new_call_slot;
+          }
+
           // Transmit
           SendLoRaPacket(Sentence, Bytes);
         }
@@ -739,7 +790,7 @@ int BuildLoRaPositionPacket(unsigned char *TxLine)
   BinaryPacket.Temp = readRegister(REG_TEMP);
   BinaryPacket.rxPktCount = GroundCount;
   BinaryPacket.rxRSSI = readRegister(REG_RSSI);
-  BinaryPacket.telemFlags = (current_uplink_slot&0x0F) | (uplink_slots_in_use&0x0F)<<4; // Horus: We could use this field to indicate a cutdown command has succeeded.
+  BinaryPacket.uplinkSlots = (current_uplink_slot&0x0F) | (uplink_slots_in_use&0x0F)<<4; // Horus: We could use this field to indicate a cutdown command has succeeded.
 
   memcpy(TxLine, &BinaryPacket, sizeof(BinaryPacket));
 	
