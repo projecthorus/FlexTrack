@@ -157,7 +157,7 @@ const uint8_t deltaAlt_m = 50;
 
 // Uplink timeslot store.
 uint8_t current_uplink_slot = 0;
-uint8_t uplink_slots_in_use = 3;
+uint8_t uplink_slots_in_use = 0;
 #define MAX_UPLINK_SLOTS 15
 uint16_t uplink_slots[MAX_UPLINK_SLOTS] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 

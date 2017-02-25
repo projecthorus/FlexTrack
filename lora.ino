@@ -377,7 +377,7 @@ void CheckLoRaRx(void)
       Bytes = min(Bytes, sizeof(Sentence));
 
       // Delay for a short amount of time, to allow the ground stations to switch back into RX mode.
-      delay(250);
+      delay(200);
 					
       if (Bytes > 0)
       {
@@ -525,12 +525,6 @@ void CheckLoRaRx(void)
         {
           // Set re-transitted flag.
           Sentence[1] = 1;
-
-          if(uplink_slots_in_use == MAX_UPLINK_SLOTS){
-            // All uplink slots in use, return a dummy value (255) indicating this.
-            Sentence[12] = 255;
-          }
-          else{
             // Hash Callsign. - CRC16-CCITT
             // Note on hash collisions:
             // - The VK5 call-space, *without* SSIDs (i.e. -0) is free from collisions.
@@ -564,7 +558,7 @@ void CheckLoRaRx(void)
               k++;
             }
             Sentence[12] = new_call_slot;
-          }
+          
 
           // Transmit
           SendLoRaPacket(Sentence, Bytes);
@@ -578,7 +572,9 @@ void CheckLoRaRx(void)
         else{
           return;
         }
+        delay(200);
       }
+
     }
   }
 }
@@ -817,7 +813,7 @@ void CheckLoRa(void)
 
     PacketLength = BuildLoRaPositionPacket(Sentence);
     Serial.println(F("LoRa: Tx Binary packet"));
-						
+
     SendLoRaPacket(Sentence, PacketLength);
 
     // Increment current uplink slot counter.
