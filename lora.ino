@@ -779,7 +779,6 @@ int BuildLoRaPositionPacket(unsigned char *TxLine)
   BinaryPacket.PayloadFlags = 0;
   BinaryPacket.PayloadIDs = LORA_ID;
   BinaryPacket.Counter = SentenceCounter;
-  BinaryPacket.BiSeconds = GPS.SecondsInDay / 2L;
   BinaryPacket.Hour = GPS.Hours; // Updated 2018-02-07
   BinaryPacket.Minute = GPS.Minutes;
   BinaryPacket.Second = GPS.Seconds;
