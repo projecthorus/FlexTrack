@@ -108,7 +108,9 @@ struct TBinaryPacket
   uint8_t   PayloadFlags;
   uint8_t   PayloadIDs;
   uint16_t  Counter;
-  uint16_t  BiSeconds;
+  uint8_t Hour;  // Updated 2018-02-07
+  uint8_t Minute;
+  uint8_t Second;
   float   Latitude;
   float   Longitude;
   uint16_t    Altitude;
